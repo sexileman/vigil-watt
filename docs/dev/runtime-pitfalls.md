@@ -823,6 +823,8 @@ if (msg == Native.WM_PAINT) { /* BeginPaint → FillRect(BLACK_BRUSH) → EndPai
 
 ## 20. 从 `bin` 启动后写盘全被拒、没有托盘图标：exe 继承了工作区的 Low 完整性标签（2026-10-20 定案）
 
+> **2026-10-24 更新**：应用数据已改到「应用根目录 `data\`」，日志/设置/历史不再写 `%LOCALAPPDATA%`，所以本节里“写 `%LOCALAPPDATA%` 被拒”的写盘症状已不再是用户问题；托盘、`HKCU` 自启仍受 Low IL 影响。下面保留为排查思路与历史记录。
+
 **症状**（一起出现，很容易误判成好几个 bug）：
 
 - 应用能启动、能进设置页，但**日志一行不写**（`app-yyyy-MM-dd.log` 的 mtime 停在旧时间）

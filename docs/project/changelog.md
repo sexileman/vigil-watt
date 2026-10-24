@@ -7,6 +7,8 @@
 
 - **MCHOSE G3 Ultra（`0BDA:4762`）**：Realtek 接收器的电量通道是 feature `0x11` 触发（`F9 FF×63`）+ input `0x13` 的 E2 状态帧，和键盘 G87 的 20 字节 `0x13` 会话、鼠标 V2 的 output 触发都不是同一条路。新增 `MchoseInterfaceClassifier.MouseG3Ultra`（`0xFF01/0x0001`、65 字节 feature）与 `MchosePlugin.TryG3Ultra` / `PollG3Ultra`，本机读出 61% 放电，与官方 M HUB 一致；会写帧，沿用 `Mchose` 品牌开关、默认关。见 `hardware/mchose.md` §4。
 - **罗技 G435 耳机（`046D:0ACB`）**：不是 HID++，走 Realtek 桥的 feature `0x06`（进 bootloader → PA 命令 → 读回 → 退出）。新增 `G435Codec` 与 `LogitechPlugin.IsG435Interface` / `ReadG435Millivolts`，毫伏按社区曲线换算百分比；耳机未连接时回 `D2 00`（210mV）必须拒绝。每次读会让音频断约 1 秒，故按 15 分钟节拍读、默认关，充电态 Unknown。见 `hardware/logitech.md`。
+- **更新源改为 fork 的 GitHub Release**：`UpdateService` 的 `GitHubRepoUrl` 指向 `sexileman/vigil-watt`，`GiteeRepoUrl` 留空即禁用回退，避免上游包覆盖 G3/G435 适配；新增 tag 驱动的 `.github/workflows/release.yml`，1.2.4 起生效。见 `dev/fork-update.md`。
+- **数据目录改为应用根目录的 `data\`**：日志/设置/历史不再写 `%LOCALAPPDATA%\VigilWatt`。安装版/便携版取 `current` 的上一级（`Update.exe` 所在目录），直接运行取 exe 所在目录，旧数据首次启动自动迁移。这样免安装版、受限目录和“整个文件夹搬走”都能用；程序目录只读时仍可用 `VIGILWATT_DATA_DIR` 覆盖。见 `dev/build.md` §3.1。
 
 ## 2026-10-21
 
@@ -196,4 +198,5 @@
 | 1.2.0 | 10-16 | 关于页（介绍 + 检查更新从设置迁出）；本机打包 |
 | 1.2.1 | 10-18 | 剩余时间估算及原因提示、设备右键重命名简介；本机打包 |
 | 1.2.3 | 10-21 | 9 款社区设备适配；删除离线设备与永久屏蔽、贴片拖动/选屏/尺寸三处修复、失败不再静默；本机试装 |
+| 1.2.4 | 10-24 | 迈从 G3 Ultra / 罗技 G435；更新源切到 fork 的 GitHub Release，Gitee 回退默认关；CI tag 发布 |
 | 1.2.2 | 10-19 | 8 款社区设备适配（会写帧的默认关）、更新说明与贡献者页；本机试装 |

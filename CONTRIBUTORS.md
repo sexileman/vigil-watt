@@ -18,6 +18,6 @@ VigilWatt 的设备适配大多来自社区：有人提供抓包样本，有人�
 
 - **有设备**：抓一次官方软件的包（手法见 [debugging.md](docs/hardware/debugging.md) §1），或按协议文档里的验证清单复测。GANSS 与 V9 Pro 目前都只有贡献者一台机器的样本，还缺第二台设备的数据（`docs/reviews/BACKLOG.md` CR-66 / CR-67）。
 - **写代码**：新设备按 [AGENTS.md](AGENTS.md) 的规则接入——插件继承 `BatteryPluginBase`、会写帧的默认关闭、只发有出处的帧。
-- **报问题**：设备读不到、读数跳动、离线误判，带上型号、VID/PID 和日志（`%LOCALAPPDATA%\VigilWatt\logs`）。现象描述清楚的 issue 与代码贡献一样有价值。
+- **报问题**：设备读不到、读数跳动、离线误判，带上型号、VID/PID 和日志（程序目录 `data\logs`；安装版是 `%LOCALAPPDATA%\VigilWattApp\data\logs`）。现象描述清楚的 issue 与代码贡献一样有价值。
 
 > 只做兼容性适配、不涉及厂商代码复用的贡献同样计入。每个协议的来源与许可边界见 [docs/hardware/sources.md](docs/hardware/sources.md)。

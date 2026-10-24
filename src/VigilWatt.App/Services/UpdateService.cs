@@ -5,21 +5,23 @@ using VigilWatt.Core.Utils;
 namespace VigilWatt.App.Services;
 
 /// <summary>
-/// 功 能： 自动更新：包一层 Velopack 的 UpdateManager，GitHub 优先、连不上再回退 Gitee。
-/// 2026/10/14 22:17:14 xliu
-/// 两个仓库的 Release 资产必须一致（同一次 build-installer 的产物各传一份），见 docs/dev/build.md §8。
+/// 功 能： 自动更新：包一层 Velopack 的 UpdateManager，只读本 fork 的 GitHub Release。
+/// 2026/10/24 19:40:00 jiang
+/// Gitee 回退留空即禁用，防止上游回退包覆盖本分支的设备适配；配置见 docs/dev/fork-update.md。
 /// </summary>
 public sealed class UpdateService
 {
-    private const string GitHubRepoUrl = "https://github.com/evren-oct/vigil-watt";
-    private const string GiteeRepoUrl = "https://gitee.com/YGWG-LX/vigil-watt";
+    private const string GitHubRepoUrl = "https://github.com/sexileman/vigil-watt";
+
+    // 可选：填自己的 Gitee 镜像 URL 才启用回退；留空禁用，避免回退到上游仓库。
+    private const string GiteeRepoUrl = "";
 
     // GitHub 被墙时表现为"连得上但不回包"，不设上限会一直等到 HttpClient 默认超时（100 秒），
     // 启动检查会白等；超过这个时间就直接当它不可用。
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(8);
 
     private readonly UpdateManager _github;
-    private readonly UpdateManager _gitee;
+    private readonly UpdateManager? _gitee;
 
     // 检查成功后固定下来：delta 包必须从"给出清单的那个源"继续下载，中途换源会对不上
     private UpdateManager _active;
@@ -28,7 +30,9 @@ public sealed class UpdateService
     {
         // 匿名访问即可（公开仓库）；accessToken / downloader 传 null 用默认实现
         _github = new UpdateManager(new GithubSource(GitHubRepoUrl, null, false, null));
-        _gitee = new UpdateManager(new GiteaSource(GiteeRepoUrl, null, false, null));
+        _gitee = string.IsNullOrWhiteSpace(GiteeRepoUrl)
+            ? null
+            : new UpdateManager(new GiteaSource(GiteeRepoUrl, null, false, null));
         _active = _github;
     }
 
@@ -39,7 +43,7 @@ public sealed class UpdateService
     /// <summary>本次检查实际走通的源（GitHub / Gitee），供界面文案与日志显示。</summary>
     public string SourceName { get; private set; } = "GitHub";
 
-    /// <summary>检查更新。null = 已是最新；两个源都不可达才抛异常，由调用方呈现。</summary>
+    /// <summary>检查更新。null = 已是最新；所有源都不可达才抛异常，由调用方呈现。</summary>
     public async Task<UpdateInfo?> CheckAsync()
     {
         string githubError;
@@ -53,8 +57,11 @@ public sealed class UpdateService
         catch (Exception ex)
         {
             githubError = ex.Message;
-            Log.Warn("GitHub 更新源不可用，回退 Gitee: " + ex.Message);
+            Log.Warn("GitHub 更新源不可用: " + ex.Message);
         }
+
+        if (_gitee is null)
+            throw new InvalidOperationException($"GitHub 更新源不可用（{githubError}）");
 
         try
         {

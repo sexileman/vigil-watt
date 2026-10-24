@@ -172,6 +172,10 @@ public partial class App : Application
     /// <summary>真正的启动流程。由 <see cref="OnLaunched"/> 的兜底包住，本身不做异常处理。</summary>
     private void StartCore(LaunchActivatedEventArgs args)
     {
+        // 数据目录在 exe 根目录下；旧版 Release 写在 %LOCALAPPDATA%，首次启动搬一次。
+        // 必须先于 Log 探测：否则探针会先在新目录建空日志，看起来迁移失败。
+        var migrated = AppPaths.MigrateLegacyDataIfNeeded();
+
         // 日志写不进去时 Emit 会静默丢弃所有行，用户那边看到的就是"一行日志都没有"，
         // 进而没法判断到底卡在哪。先探一次，不行就明说，别让人对着一个哑巴应用猜。
         if (!Log.TryProbeWriter(out var logError))
@@ -188,6 +192,7 @@ public partial class App : Application
         Log.RetentionDays = Services.Settings.LogRetentionDays;
 
         Log.Info($"启动 VigilWatt，参数: {args.Arguments}");
+        Log.Info($"数据目录: {AppPaths.RootDir}{(migrated ? "（已从旧目录迁移）" : "")}");
         Log.Info("进程身份: " + ProcessIdentity.Describe());
         Services.Manager.Start();
 
@@ -197,7 +202,11 @@ public partial class App : Application
         Services.Tray.Initialize();
 
         Services.MainWindow.Activate();
-        if (Services.Settings.StartMinimized)
+        // 开机自启写的是 `... --minimized`，与设置里的“启动时最小化”是同一意图：
+        // 以前只读 Settings.StartMinimized，导致勾了自启、没勾最小化时开机会弹主窗口。
+        var startMinimized = Services.Settings.StartMinimized
+            || (args.Arguments?.Contains("--minimized", StringComparison.OrdinalIgnoreCase) ?? false);
+        if (startMinimized)
         {
             Services.MainWindow.AppWindow.Hide();
         }
@@ -230,7 +239,7 @@ public partial class App : Application
             }
 
             UpdateStatusMessage = "正在检查更新…";
-            Log.Info("启动时检查更新（GitHub 优先，失败回退 Gitee）");
+            Log.Info("启动时检查更新（本 fork 的 GitHub Release）");
             var update = await updater.CheckAsync();
             if (update == null)
             {

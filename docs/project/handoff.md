@@ -1,14 +1,14 @@
 # 会话交接（给下一个 AI / 未来的自己）
 
-> 快照时间：2026-10-14。**先读本文，再按需查其他文档**；内容冲突时以专题文档为准（本文是快照）。
+> 快照时间：2026-10-24。**先读本文，再按需查其他文档**；内容冲突时以专题文档为准（本文是快照）。
 > 逐轮原因在 **[changelog.md](changelog.md)**。本文只留当前状态、设备、未完成的待办、注意事项、文件速查。
 > **维护约定**：收工后本轮原因追加进 `changelog.md`；本文件只改 §1 状态与 §4 未完成待办。已完成的待办删掉，不划掉留着。全文超过 120 行先删历史再写（`AGENTS.md` §3）。
 
 ## 1. 当前状态
 
-当前安装包 **1.2.3**（`dist/`，本机试装用；尚未上传正式 Release）。正式线上以 GitHub 最新 Release 为准，Gitee 是回退源；更新源 GitHub 优先、8 秒不通回退 Gitee。发新版时保留上一版 `*-full.nupkg` 作为 delta 基准；规则见 `dev/build.md` §8。
+当前安装包 **1.2.4**（分支 `vigil-watt-update`，本地 `dist/`；尚未发布）。更新源是本 fork 的 GitHub Release（`sexileman/vigil-watt`），Gitee 回退默认关闭；**已装旧版的用户必须手动装一次 1.2.4**，之后才能自动更新。发新版时保留上一版 `*-full.nupkg` 作为 delta 基准；完整流程见 `dev/fork-update.md`。
 
-本机已打通：迈从 G87（0x13）、雷柏 VT3（status-report7，纯被动）、北通 T9（被动流）、经典蓝牙耳机（HFP 网关节点 `DEVPKEY_Device_BatteryLevel`）、罗技 Bolt 接收器（C548）+ MX Master 3S。本机电量可选，默认关。弱水时砂 2.4G 无电量通道，不再投入。**其余机型均为贡献者真机、本机未复测，逐台状态见 §2 表**——别把 §2 里「贡献者真机」当成我们验过。
+本机已打通：迈从 G87（0x13）、迈从 G3 Ultra（0BDA:4762，feature 0x11 + input 0x13，本机 61%）、罗技 G435（046D:0ACB，需开机；每次读断音约 1 秒，15 分钟一次）、雷柏 VT3（status-report7，纯被动）、北通 T9（被动流）、经典蓝牙耳机（HFP 网关节点 `DEVPKEY_Device_BatteryLevel`）、罗技 Bolt 接收器（C548）+ MX Master 3S。本机电量可选，默认关。弱水时砂 2.4G 无电量通道，不再投入。**其余机型均为贡献者真机、本机未复测，逐台状态见 §2 表**——别把 §2 里「贡献者真机」当成我们验过。
 
 任务栏贴片是原生子窗口 `Services/TaskbarPillWindow.cs`（`SetParent` 进 `Shell_TrayWnd`），不是 WinUI 覆盖窗；小组件仍用 `TransparentWindowSurface`，Win10 上因此没有 DWM 投影（CR-57）。**拖动走 16ms 轮询，不靠鼠标捕获**——捕获对非前台窗口无效（`dev/runtime-pitfalls.md` §16、§16.5.1；§17 只对小组件）。选屏由 `Services/TaskbarPillManager.cs` 每秒按 `monitorDevicePath` 匹配，配置的屏不在就降级贴主屏，设置页显示真实屏幕名——`\\.\DISPLAYn` 是配置序号不是身份，见 `dev/monitor-identity.md`。
 
@@ -16,7 +16,7 @@
 
 设备列表支持：右键自定义名称与图标（按设备 ID 持久化，历史页用当前名、已有采样不改写）；**右键删除离线设备**——同时清掉该设备历史（VACUUM），勾「永久移除」写本地黑名单、插件认领阶段即跳过，恢复入口在设备页底部「已屏蔽 N 台设备」（两份名单见 `code-flow.md` §5.2，真机验收清单见 §4 第 13 条）；剩余时间估算（至少 3 个不同时间点且有净下降才显示，否则说明原因，见 `code-flow.md` §5）。
 
-**开发版数据目录在 `bin\x64\Debug\...\win-x64\data\`**（`AppPaths` 用 `#if DEBUG` 分流，Release 才用 `%LOCALAPPDATA%\VigilWatt`），所以从 `bin` 双击即可运行、不碰用户目录；`VIGILWATT_DATA_DIR` 可覆盖。为什么必须这么改见 `dev/runtime-pitfalls.md` §20，用法见 `dev/build.md` §3.1。
+**数据目录统一在应用根目录的 `data\`**（`AppPaths`：安装版/便携版取 `current` 的上一级，直接运行取 exe 目录；Debug 因此是 `bin\x64\Debug\...\win-x64\data\`），所以从 `bin` 双击即可运行、不碰用户目录；`VIGILWATT_DATA_DIR` 可覆盖。旧版 `%LOCALAPPDATA%\VigilWatt` 首次启动迁移。用法见 `dev/build.md` §3.1。
 
 审查标准在 `docs/dev/review-standard.md`，未修项全集在 `docs/reviews/BACKLOG.md`（不要在本文再抄一份）。
 

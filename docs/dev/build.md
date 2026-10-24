@@ -24,13 +24,16 @@ Debug 构建的数据目录就在该目录下的 `data\`，直接双击即可运
 
 ## 3.1 运行 Debug 版：数据就在 exe 旁边
 
-**Debug 构建的数据目录是 `bin\x64\Debug\...\win-x64\data\`**，不是 `%LOCALAPPDATA%`。
-`AppPaths.ResolveRootDir()` 用 `#if DEBUG` 分流：Debug 取 `AppContext.BaseDirectory\data`，
-Release 才取 `%LOCALAPPDATA%\VigilWatt`。这是 .NET 开发的常规做法，好处是：
+**数据目录统一在应用根目录下：`<应用根目录>\data\`**，不再区分 Debug / Release，也不写 `%LOCALAPPDATA%`。
+`AppPaths` 的规则：
 
-- 开发版与正式版各用一份 `settings.json` / `history.db` / `logs`，互不覆盖、历史不互相污染；
-- 不往用户目录写东西，卸载/清理只要删 `bin`；
-- 想从干净状态开始，删掉 `data\` 再启动即可。
+- exe 在 Velopack 的 `current\` 下（安装版/便携版）→ 根目录取 `current` 的上一级，升级换 `current` 不会丢数据；
+- 其它情况（`bin` 下直接跑、解压即用）→ 根目录就是 exe 所在目录；
+- Debug 构建因此落在 `bin\x64\Debug\...\win-x64\data\`，Release 安装版落在 `%LOCALAPPDATA%\VigilWattApp\data\`。
+
+好处是：数据跟着程序目录走，便携、可整体搬走；开发版与正式版各用一份 `settings.json` / `history.db` / `logs`；
+从干净状态开始只要删掉 `data\`。旧版 Release 的 `%LOCALAPPDATA%\VigilWatt` 会在首次启动时自动迁移一次。
+如果程序目录本身只读（例如装到 `Program Files`），用 `VIGILWATT_DATA_DIR` 指到可写目录。
 
 所以**直接从 `bin` 双击就能跑**，不用复制、不用设环境变量：
 
@@ -38,7 +41,7 @@ Release 才取 `%LOCALAPPDATA%\VigilWatt`。这是 .NET 开发的常规做法，
 src\VigilWatt.App\bin\x64\Debug\net8.0-windows10.0.19041.0\win-x64\VigilWatt.App.exe
 ```
 
-`data\` 已被 `.gitignore` 的 `bin/` 规则覆盖，不会进仓库。
+Debug 的 `data\` 在 `bin\` 下，已被 `.gitignore` 覆盖，不会进仓库。
 
 **`VIGILWATT_DATA_DIR` 仍然可用**，优先级最高（`AppPaths.DataDirVariable`），非法路径会自动退回：
 
@@ -137,6 +140,8 @@ xUnit 项目（`net8.0`、AnyCPU），用 `<Compile Include>` 直接链接 `src/
 
 ## 8. 安装包（Velopack）
 
+> **本分支（`vigil-watt-update`）不同**：更新源是 `sexileman/vigil-watt`，Gitee 回退默认关闭，发布由推 `v*` 标签触发 `.github/workflows/release.yml` 完成。完整流程、一次性配置和迁移步骤见 [fork-update.md](fork-update.md)；下面 §8 里 Gitee 相关段落只适用于上游仓库。
+
 2026-10-06 接入。一条命令出安装包：
 
 ```
@@ -147,11 +152,30 @@ powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1
 
 - `VigilWattApp-win-Setup.exe`：安装包（**仅当前用户**、无 UAC、装到 `%LocalAppData%\VigilWattApp`，自动建桌面+开始菜单快捷方式、写卸载条目）
 - `VigilWattApp-win-Portable.zip`：绿色免安装版（vpk 顺带生成）
-- `VigilWattApp-*-full.nupkg`、`RELEASES`、`releases.win.json`：Velopack 更新数据；发布到 Gitee Release 时需将 `dist/` 全部产物作为附件上传，确保清单引用的包都可下载
+- `VigilWattApp-*-full.nupkg`、`RELEASES`、`releases.win.json`：Velopack 更新数据；发布到 GitHub Release 时需将 `dist/` 全部产物作为附件上传，确保清单引用的包都可下载
+
+### 精简版（约 22 MB，需预装运行时）
+
+默认包是 self-contained：.NET 8 与 Windows App SDK 都随包分发，目标机零依赖，但 Setup 约 44 MB。只给自己这台已装开发环境的机器用时，可以打精简版：
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1 -FrameworkDependent
+```
+
+- 不打包 .NET 与 Windows App SDK 运行时，产物在 `dist-lite/`，本机实测 Setup 约 **21.7 MB**、Portable 约 **14.1 MB**
+- **前提**：目标机已有 **.NET 8 Desktop Runtime** 和 **Windows App Runtime 1.7**；换成没装运行时的电脑会起不来，别把精简版发给别人
+- 检查运行时：
+
+  ```powershell
+  dotnet --list-runtimes | Select-String 'Microsoft.WindowsDesktop.App 8\.'
+  Get-AppxPackage -Name 'Microsoft.WindowsAppRuntime.1.7*'
+  ```
+
+- 精简版和完整版共用同一个 `packId`/安装目录，升回完整版直接装新的 Setup 即可；`dist-lite/` 每次构建都会清空，完整版的 `dist/` 仍保留旧包做 delta 基准
 
 ### 关键决策与坑
 
-1. **packId 必须叫 `VigilWattApp`，不能叫 `VigilWatt`**。Velopack 默认装到 `%LocalAppData%\<packId>`，叫 VigilWatt 会和应用数据目录 `%LOCALAPPDATA%\VigilWatt`（settings.json/history.db/logs）撞车，升级时数据被清。脚本里有注释，改 packId 前想清楚。
+1. **packId 必须叫 `VigilWattApp`，不能叫 `VigilWatt`**。Velopack 默认装到 `%LocalAppData%\<packId>`；若 packId 也叫 `VigilWatt`，卸载/升级时容易把安装根目录连同 `data\`（settings.json/history.db/logs）一起清掉。数据现在在安装根目录的 `data\`，更要把两者分开。脚本里有注释，改 packId 前想清楚。
 2. **vpk 不指定 `--runtime` 会默认 x86**（仅警告不报错）。脚本是 x64-only 应用，传了 `--runtime win-x64`；改打包方式时别丢。
 3. **同一个版本不能重复 pack**（FTL: release in channel win equal or greater）。重打同版本要先把 `dist/` 清空；
    **发新版本时不要清空**——旧版本的 `*-full.nupkg` 是 delta 的基准，留着才会自动生成
@@ -170,7 +194,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1
 
 - `Program.cs`：自定义入口（csproj `DISABLE_XAML_GENERATED_MAIN` 关掉了 XAML 生成的 Main）。`VelopackApp.Build().Run()` 必须最先跑——安装/更新/卸载钩子进程带 `--veloapp-*` 参数被拉起，在这里被消费后直接退出，所以 `App.OnLaunched` 的单实例互斥不会误杀钩子进程，也不用改。
 - 卸载清理：`OnBeforeUninstallFastCallback` 里调 `AutostartService.SetEnabled(false)` 删 HKCU Run 自启动残留。
-- `Services/UpdateService.cs` + 关于页"软件更新"区：更新源是 Velopack **内置的 `GithubSource` / `GiteaSource`**，不是自写适配器——Gitee 的 `/api/v1` 与 `/api/v5` 返回一致（2026-10-14 实测：同仓库同键同值），而 `GiteaSource` 的 API 基址正是硬编码的 `{host}/api/v1/`，所以直接可用。**GitHub 优先，8 秒内没结果或抛错就回退 Gitee**（`ProbeTimeout`）；检查成功后源固定，delta 包必须从给出清单的那个源继续下载。两个仓库 URL 是常量，`publish-gitee.ps1` 必须与 `UpdateService` 里的 Gitee 地址指向同一个仓库，且两边的 Release 资产要一致。启动时检查一次，关于页保留手动检查。运行副本未安装时不执行安装更新。
+- `Services/UpdateService.cs` + 关于页"软件更新"区：更新源是 Velopack **内置的 `GithubSource` / `GiteaSource`**，不是自写适配器。本分支 `GitHubRepoUrl` 指向 `sexileman/vigil-watt`，`GiteeRepoUrl` 留空即禁用回退（避免装回上游包）；8 秒内 GitHub 没结果就报错（`ProbeTimeout`）。检查成功后源固定，delta 包必须从给出清单的那个源继续下载。若以后填了自己的 Gitee 镜像，该地址必须与镜像 Release 指向同一个仓库，且两边资产一致。启动时检查一次，关于页保留手动检查。运行副本未安装时不执行安装更新。
 - 版本号唯一来源：`VigilWatt.App.csproj` 的 `<Version>`，exe FileVersion、设置页显示、安装包版本都从它来。
 
 ### 更新说明（release notes）
@@ -187,7 +211,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-installer.ps1
 
 安装（静默）→ 目录/快捷方式/卸载条目正确、数据目录不冲突；自动更新（把 1.0.1 nupkg 丢进 `packages\` 后启动 1.0.0 → 自动升级重启到 1.0.1）；卸载 → 安装目录/快捷方式/卸载条目/HKCU Run 残留全部清掉，用户数据保留。
 
-### 发布到 Gitee（回退源）
+### 发布到 Gitee（上游流程，fork 不使用）
 
 自动更新**先读 GitHub**（`github.com/evren-oct/vigil-watt`），8 秒内不可达或报错才回退 `gitee.com/YGWG-LX/vigil-watt`。两边走的是同一套 Velopack 清单：`GiteaSource` 经 `/api/v1/repos/.../releases` 列出版本（空仓库返回 `[]`，视为无新版本），Velopack 清单与包从 Release 附件下载。Gitee Release 下载路由见[官方说明](https://blog.gitee.com/2022/08/18/update/)；`vpk pack` 产出的 `releases.win.json` 与各 `.nupkg` 都要作为附件上传，确保清单引用的包都可下载。**两个仓库都要传同一份资产**，否则国内用户回退到 Gitee 时会看不到新版本。
 

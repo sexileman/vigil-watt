@@ -4,7 +4,7 @@
 
 ## 0. 日志考古（永远第一步）
 
-先翻 `%LOCALAPPDATA%\VigilWatt\logs\`（按日文件 `app-日期.log`）：接口扫描清单（VID/PID/usage/长度）、历次探测的原始报文、错误都在里面。过去的探测结论可能已经回答了当前问题（2026-10-05 的"邮箱扫描无响应"结论就是这样从旧日志里直接复用的）。
+先翻应用根目录下的 `data\logs\`（安装版是 `%LOCALAPPDATA%\VigilWattApp\data\logs\`，免安装版是 exe 同级 `data\logs\`；按日文件 `app-日期.log`）：接口扫描清单（VID/PID/usage/长度）、历次探测的原始报文、错误都在里面。过去的探测结论可能已经回答了当前问题（2026-10-05 的"邮箱扫描无响应"结论就是这样从旧日志里直接复用的）。
 
 > **默认 `Info` 档看不到逐帧报文**（自 2026-10-09 日志分级改造起）：接口清单、逐帧原始报文、"读了但没解析出东西"的中间帧都是 `Debug`，
 > 默认不写。要考古这些内容，先去**设置页把日志级别切到"详细"**（或改 `settings.json` 的 `LogLevel=Debug`），**重启应用**后再复现。
@@ -20,7 +20,7 @@ grep -a "ERR \|WARN " app-*.log | tail      # 最近错误
 grep -a "时间基准" app-*.log                 # 文件首行：本地时区 + UTC offset（与 history.db 的 UTC 对齐）
 ```
 
-设备/设置：`%LOCALAPPDATA%\VigilWatt\settings.json`（PluginEnabled——各插件的开关，同时就是它的写入授权）、history.db（SQLite，samples 表）。
+设备/设置：应用根目录 `data\settings.json`（PluginEnabled——各插件的开关，同时就是它的写入授权）、`data\history.db`（SQLite，samples 表）。
 
 ## 1. 抓官方软件的包（浏览器 WebHID monkey-patch）★主力手法
 

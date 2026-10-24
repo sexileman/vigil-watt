@@ -10,7 +10,7 @@
     <RootNamespace>VigilWatt.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- 版本号单一来源：打包脚本 scripts/build-installer.ps1 从发布 exe 的 FileVersion 读取 -->
-    <Version>1.2.3</Version>
+    <Version>1.2.4</Version>
     <Authors>evren-oct</Authors>
     <Company>evren-oct</Company>
     <Product>VigilWatt</Product>
@@ -79,10 +79,12 @@
   </ItemGroup>
 
   <!-- 工作区目录带 Low 完整性标签（沙箱标记），重建的 exe 会继承它 → 进程变 Low IL：
-       写不了 %LOCALAPPDATA% 与 HKCU\Run、Shell_NotifyIcon 失败、托盘与贴片全废。
-       每次构建都要显式提回 Medium，否则"改完还是崩"会反复出现。见 runtime-pitfalls.md §20。 -->
+       写不了 HKCU\Run、Shell_NotifyIcon 失败、托盘与贴片全废。
+       每次构建都要显式提回 Medium，否则"改完还是崩"会反复出现。见 runtime-pitfalls.md §20。
+       工作区里 Low IL 进程无权把标签提回 Medium，此时 icacls 返回 5；这是开发环境限制，
+       不应当成构建失败刷警告——打包/安装版在默认 Medium 目录下不受影响。 -->
   <Target Name="RestoreExeIntegrityLevel" AfterTargets="Build" Condition="'$(Configuration)' == 'Debug'">
-    <Exec Command="icacls &quot;$(TargetDir)$(AssemblyName).exe&quot; /setintegritylevel Medium" ContinueOnError="true" />
+    <Exec Command="icacls &quot;$(TargetDir)$(AssemblyName).exe&quot; /setintegritylevel Medium" IgnoreExitCode="true" />
   </Target>
 
 </Project>

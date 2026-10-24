@@ -15,6 +15,7 @@
 ## 开发与排查
 
 - [build.md](dev/build.md)：构建、测试、发布和环境问题。
+- [fork-update.md](dev/fork-update.md)：本 fork 的 GitHub Release 发布、自动更新配置和一次性迁移清单。
 - [runtime-pitfalls.md](dev/runtime-pitfalls.md)：HID、蓝牙、窗口、DPI 和 XAML 运行时问题。
 - [monitor-identity.md](dev/monitor-identity.md)：显示器身份与名称（贴片选屏），三套 API 实测对照与降级链。
 - [logging.md](dev/logging.md)：日志级别、文件位置、保留和排障用法。

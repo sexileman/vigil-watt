@@ -13,9 +13,8 @@ namespace VigilWatt.App.Views;
 /// </summary>
 public sealed partial class AboutPage : Page
 {
-    private const string RepoUrl = "https://gitee.com/YGWG-LX/vigil-watt";
-    private const string ReleasesUrl = "https://github.com/evren-oct/vigil-watt/releases";
-    private const string GitHubUrl = "https://github.com/evren-oct/vigil-watt";
+    private const string ReleasesUrl = "https://github.com/sexileman/vigil-watt/releases";
+    private const string GitHubUrl = "https://github.com/sexileman/vigil-watt";
 
     private bool _notesRendered;
 
@@ -113,9 +112,7 @@ public sealed partial class AboutPage : Page
             var info = await svc.CheckAsync();
             if (info == null)
             {
-                // 回退到 Gitee 说明 GitHub 那边不通，顺带告诉用户为什么慢了
-                var via = svc.SourceName == "Gitee" ? "（GitHub 不可达，已回退 Gitee）" : "";
-                App.UpdateStatusMessage = $"已是最新版本（{svc.CurrentVersion}）{via}";
+                App.UpdateStatusMessage = $"已是最新版本（{svc.CurrentVersion}）";
                 UpdateStatusText.Text = App.UpdateStatusMessage;
                 return;
             }
@@ -141,8 +138,6 @@ public sealed partial class AboutPage : Page
             CheckUpdateButton.IsEnabled = true;
         }
     }
-
-    private void OpenRepo_Click(object sender, RoutedEventArgs e) => OpenUrl(RepoUrl);
 
     private void OpenReleases_Click(object sender, RoutedEventArgs e) => OpenUrl(ReleasesUrl);
 

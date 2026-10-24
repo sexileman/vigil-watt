@@ -1,0 +1,96 @@
+name: Release
+
+# 推更新分支只构建并上传 artifact；推 v* 标签才发布 Release。
+on:
+  push:
+    branches:
+      - vigil-watt-update
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install Velopack CLI
+        shell: pwsh
+        run: |
+          dotnet tool install --global vpk --version 1.2.161
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Resolve version
+        shell: pwsh
+        run: |
+          [xml]$csproj = Get-Content -Raw -LiteralPath src/VigilWatt.App/VigilWatt.App.csproj
+          $version = @($csproj.Project.PropertyGroup.Version) | Where-Object { $_ } | Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($version)) { throw "VigilWatt.App.csproj 缺少 <Version>" }
+          $version = "$version".Trim()
+
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            $tagVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+            if ($tagVersion -ne $version) {
+              throw "标签版本 $tagVersion 与 csproj 版本 $version 不一致"
+            }
+          }
+
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "打包版本: $version"
+
+      - name: Build installer
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vigilwatt-${{ env.VERSION }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Prepare release notes
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          . ./scripts/get-release-notes.ps1
+          $body = Get-ReleaseNotes -Root . -Version $env:VERSION
+          if ([string]::IsNullOrWhiteSpace($body)) {
+            throw "docs/project/release-notes.md 缺少 $env:VERSION 段"
+          }
+          $utf8 = New-Object System.Text.UTF8Encoding($false)
+          [System.IO.File]::WriteAllText("release-body.md", $body, $utf8)
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          files: dist/*
+          body_path: release-body.md
+          fail_on_unmatched_files: true
+          generate_release_notes: false
+          draft: false
+          prerelease: false

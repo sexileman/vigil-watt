@@ -7,7 +7,7 @@
 
 全部日志走**自研的极简静态类** `src/VigilWatt.Core/Utils/Log.cs`（**没有**引入 Serilog / NLog / `ILogger`）：
 
-- 输出位置：`%LOCALAPPDATA%\VigilWatt\logs\app-yyyy-MM-dd.log`（`AppPaths.RootDir` + `logs`）——**按本地日期每天一个文件**
+- 输出位置：`<应用根目录>\data\logs\app-yyyy-MM-dd.log`（`AppPaths.RootDir` + `logs`）——**按本地日期每天一个文件**
 - 行格式：`2026-10-09 21:15:21.808 [INFO] 雷柏 状态帧: ...`
 - 分级：`Debug < Info < Warn < Error`，外加 `Off`（全关哨兵），默认 `Info`
 - 落盘：常驻一个 `StreamWriter`（`AutoFlush = true`，UTF-8 **无 BOM**）；写入时比对日期，**跨天自动切换**到新文件（长驻应用无需重启）
@@ -184,7 +184,7 @@ app-2026-10-10.log   ← 当天
 **噪音合计 9000 行（78%）**。默认 `Info` 后预期 2 天日志量 **~11500 → ~2500 行**。
 
 > 注：上表数字来自某次真实日志文件，**仓库内无该文件，无法自动验证**。复现：取
-> `%LOCALAPPDATA%\VigilWatt\logs\` 下的按日日志（`app-*.log`），按上表各簇 `grep -c` 统计。
+> `<应用根目录>\data\logs\` 下的按日日志（`app-*.log`），按上表各簇 `grep -c` 统计。
 > 行示例修正：实际是 `收到托盘回调: 0x{mouseMessage:X4}`（`TrayService.cs`），非 `NxN`。
 
 **补充归类（原表遗漏，均归 Debug）**：Mchose 逐帧/握手簇（`MchosePlugin.cs`）、`雷柏 电量越界丢弃`（`RapooPlugin.cs`）。
