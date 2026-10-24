@@ -15,6 +15,9 @@ public enum MchoseInterfaceKind
     /// <summary>鼠标 K7 V2 Ultra+ 的命令通道（64 字节 output `0x4D`，3837:1018）。</summary>
     MouseK7,
 
+    /// <summary>MCHOSE G3 Ultra（Realtek 0BDA:4762）：E2 帧同 MouseV2，但触发走 feature 0x11。</summary>
+    MouseG3Ultra,
+
     /// <summary>V9 Pro 耳机（64 字节、reportId `0x55`）。</summary>
     HeadsetV9,
 }
@@ -32,6 +35,13 @@ public static class MchoseInterfaceClassifier
 
     /// <summary>老款 G87 世代（41E4:2001），协议同为 V1 会话。</summary>
     public const ushort MchoseLegacyVid = 0x41E4;
+
+    /// <summary>G3 Ultra 的接收器是 Realtek 方案（0BDA:4762，「G3 Mouse 8K」）。</summary>
+    public const ushort G3UltraVid = 0x0BDA;
+    public const ushort G3UltraPid = 0x4762;
+
+    /// <summary>G3 Ultra 的电量链路在 0xFF01 厂商集合上（65 字节进出、feature 0x11 触发）。</summary>
+    private const ushort G3UltraUsagePage = 0xFF01;
 
     /// <summary>键盘 V1 会话通道的报告长度（进出各 20 字节）。</summary>
     private const int KeyboardReportLength = 20;
@@ -51,7 +61,8 @@ public static class MchoseInterfaceClassifier
                 ? MchoseInterfaceKind.HeadsetV9
                 : MchoseInterfaceKind.None;
 
-        if (vendorId != MchoseVid && vendorId != MchoseLegacyVid) return MchoseInterfaceKind.None;
+        if (vendorId != MchoseVid && vendorId != MchoseLegacyVid)
+            return vendorId == G3UltraVid ? ClassifyG3Ultra(productId, usagePage, inputLength, featureLength) : MchoseInterfaceKind.None;
 
         // consumer/system/标准键盘接口即使产品名含 MCHOSE 也不是配置通道，必须是厂商用法 + 可用 I/O
         if (usagePage < 0xFF00 && usage < 0xFF00) return MchoseInterfaceKind.None;
@@ -70,4 +81,14 @@ public static class MchoseInterfaceClassifier
 
         return MchoseInterfaceKind.None;
     }
+
+    /// <summary>G3 Ultra 只认 0xFF01 的 65 字节厂商集合；同 VID/PID 的 FF0B 集合不是电量通道。</summary>
+    private static MchoseInterfaceKind ClassifyG3Ultra(ushort productId, ushort usagePage,
+        ushort inputLength, ushort featureLength)
+        => productId == G3UltraPid
+           && usagePage == G3UltraUsagePage
+           && inputLength >= 64
+           && featureLength >= 64
+            ? MchoseInterfaceKind.MouseG3Ultra
+            : MchoseInterfaceKind.None;
 }

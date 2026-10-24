@@ -1,4 +1,4 @@
-# 罗技 Logitech (VID_046D) —— ✅ Bolt 真机验证（2026-10-08）；协议驱动 + 嵌入目录
+# 罗技 Logitech (VID_046D) —— ✅ Bolt 真机验证（2026-10-08）；G435 耳机 2.4G 电量已打通
 
 > 从 [protocols.md](protocols.md) 拆出（2026-10-21）。结论均来自真机验证或官方软件抓包；改协议代码前先读本文。
 
@@ -44,3 +44,29 @@ HID++ 1.0/2.0 协议发现（无型号白名单）。电量级联：
 | ADC Measurement `0x1F20` | 大端毫伏 + flags；`0x01`=放电 / `0x03`=充电 / `0x07`=充满 |
 | 统一充电状态码（`0x1004` / `0x1000` 共用） | `1`/`2`/`4`=充电中、`3`=充满、其余=放电 |
 | 配对信息 `0xB5` 字节布局 | Unifying `0x2N`：参数区 `[3..4]`=WPID、`[7]`=kind；Bolt `0x5N`：`[1]`=kind、`[2..3]`=WPID（小端，交换后成大端） |
+
+## 罗技 G435 耳机（046D:0ACB）—— ⚠️ 2.4G 可读，但每次读会断音频约 1 秒
+
+**身份**：G435 LIGHTSPEED 接收器（HDT647）`046D:0ACB`，厂商集合 `0xFFC0/0x0001`（input 8、feature 64）。它不是 HID++，`IsHidppInterface` 不会认领；必须单独走 Realtek 桥。
+
+**传输**（feature report `0x06`，长度 64）：
+
+1. 进 bootloader：`06 01 03`，input 上等 `06 5A`。
+2. 发命令：`06 04 03 <len> <PA 命令>`，input 上等 ACK（`06 5A` / `06 FE`）。
+3. 读回：`GET_FEATURE(0x06)`，响应以 `50 49`（"PI"）开头；轮询到匹配窗口。
+4. 退出：`06 08 03`（必须 finally 执行，否则桥留在 bootloader）。
+
+**PA 命令**：`50 41 <category> <seq> <len> <payload…>`。
+
+| 命令 | 帧 | 响应 |
+|---|---|---|
+| 连接状态 | `0E seq 01 E3` | `02 00 E3 <0/1>` |
+| 读 remote 模式 | `0E seq 01 E0` | `02 00 E0 <mode>` |
+| 写 remote 模式 | `0E seq 02 E1 01` | — |
+| 读电池 | `06 seq 01 00 31` | `07 00 06 <seq\|0x80> 00 <mV lo> <mV hi>` |
+
+**实测**（2026-10-21，本机耳机未开机）：连接状态回 0；电池命令回 `D2 00` = 210mV——这是未连接时的垃圾值，必须用 2500–4600mV 区间拒绝，不能当 0%。耳机开机后的百分比待复测。
+
+**限制**：每次读都会让音频断约 1 秒。插件按 **15 分钟**节拍读（首次 Attach 立即读一次），与 `PluginEnabled["Logitech"]` 共用开关，默认关。电压→百分比是估算；协议没有充电标志，`Charging` 一律 Unknown。
+
+**实现**：`LogitechPlugin.IsG435Interface` / `ReadG435Millivolts`、`G435Codec`（纯函数，单测 `G435CodecTests`）。

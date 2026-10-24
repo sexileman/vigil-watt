@@ -90,4 +90,25 @@ public class MchoseMouseCodecTests
         Assert.Equal(0xFF, frame[2]);
         Assert.Equal(0xFF, frame[64]);
     }
+
+    /// <summary>G3 Ultra 真机帧（0BDA:4762 feature 0x11 触发后收到）：取反后 61%、未充电。</summary>
+    [Fact]
+    public void M17_G3Ultra真机E2帧解析_61pct_未充电()
+    {
+        byte[] frame = TestFrames.Hex("13 1D FE FE FF C2 FC FD F9 FF FF FF FF FF FF FF FF FF FF FF");
+        var kind = MchoseMouseCodec.ParseStatus(frame, out int pct, out bool chg);
+        Assert.Equal(MouseV2PushKind.Status, kind);
+        Assert.Equal(61, pct);
+        Assert.False(chg);
+    }
+
+    /// <summary>G3 Ultra 的 feature 触发只带数据区（report ID 由 HidD_SetFeature 的 buffer[0] 补）。</summary>
+    [Fact]
+    public void M18_G3Ultra触发数据区_F9起头_补FF()
+    {
+        var payload = MchoseMouseCodec.BuildG3UltraTriggerPayload(64);
+        Assert.Equal(64, payload.Length);
+        Assert.Equal(0x06 ^ 0xFF, payload[0]);
+        Assert.All(payload.Skip(1), b => Assert.Equal(0xFF, b));
+    }
 }

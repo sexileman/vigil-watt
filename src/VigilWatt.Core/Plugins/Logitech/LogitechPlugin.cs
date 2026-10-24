@@ -29,6 +29,16 @@ public sealed class LogitechPlugin : IBatteryPlugin
     /// <summary>空槽 Ping 超时后的负缓存：冷却期内不再写、不等（CR-62）。</summary>
     private static readonly TimeSpan EmptySlotCooldown = TimeSpan.FromMinutes(5);
 
+    /// <summary>G435 耳机接收器（HDT647）：厂商集合 0xFFC0，电量要经 Realtek 桥进 bootloader 读。</summary>
+    private const ushort G435ProductId = 0x0ACB;
+    private const ushort G435UsagePage = 0xFFC0;
+
+    /// <summary>G435 每次读都会让音频断约 1 秒，故 15 分钟才读一次（与社区实现一致）。</summary>
+    private static readonly TimeSpan G435PollInterval = TimeSpan.FromMinutes(15);
+
+    /// <summary>G435 feature 报文的 report ID（进出都是 6）。</summary>
+    private const byte G435ReportId = 6;
+
     /// <summary>插件开关的键，与 <c>AppSettings.PluginEnabled</c> 对应（插件开关即写入开关，见 <see cref="WritesEnabled"/>）。</summary>
     public const string SettingsKey = "Logitech";
 
@@ -83,7 +93,26 @@ public sealed class LogitechPlugin : IBatteryPlugin
         (info.UsagePage == HidppUsagePage || info.Usage == HidppUsagePage ||
          info.UsagePage == VendorUsagePage || info.Usage == VendorUsagePage);
 
+    /// <summary>G435 接收器的厂商集合（0xFFC0）；它不是 HID++，电量走 Realtek 桥的 feature 0x06。</summary>
+    public static bool IsG435Interface(HidDeviceInfo info) =>
+        info.VendorId == LogitechVid &&
+        info.ProductId == G435ProductId &&
+        info.UsagePage == G435UsagePage &&
+        info.FeatureReportLength >= 64;
+
     private readonly ConcurrentDictionary<string, ReceiverSession> _sessions = new();
+
+    /// <summary>G435 耳机会话（独立于 HID++ 接收器会话：同一插件、同一个品牌级开关）。</summary>
+    private sealed class HeadsetSession
+    {
+        public required HidDeviceInfo Info;
+        public HidDeviceHandle? Handle;
+        public DeviceStatus? Status;
+        public DateTimeOffset LastAttempt;
+        public readonly object Gate = new();
+    }
+
+    private readonly ConcurrentDictionary<string, HeadsetSession> _headsets = new();
 
     /// <summary>认领表：Attach 时记下来，<see cref="ReconcileRemovals"/> 没有 claims 参数也要能释放。</summary>
     private DeviceClaimRegistry? _claims;
@@ -194,6 +223,48 @@ public sealed class LogitechPlugin : IBatteryPlugin
             }
         }
 
+        foreach (var info in availableDevices)
+        {
+            if (!IsG435Interface(info)) continue;
+            if (!WritesEnabled) continue;
+            if (!claims.TryClaim(info.DevicePath, Name)) continue;
+
+            var session = _headsets.GetOrAdd(info.DevicePath, _ => new HeadsetSession { Info = info });
+            session.Info = info;
+
+            if (session.Handle == null)
+            {
+                try
+                {
+                    session.Handle = info.Open();
+                    session.LastAttempt = default;   // 首次 Attach 立即读一次，之后按 15 分钟节拍
+                    Log.Info($"罗技 G435 接口打开: {info}");
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    Log.Warn($"罗技 G435 接口受保护无法访问: {info.DevicePath} ({ex.Message})");
+                    claims.Release(info.DevicePath, Name);
+                    continue;
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("罗技 G435 接口打开失败", ex);
+                    claims.Release(info.DevicePath, Name);
+                    continue;
+                }
+            }
+
+            session.Status ??= new DeviceStatus
+            {
+                Id = $"logitech:g435:{PluginUtils.StableHash(info.DevicePath)}",
+                Name = "罗技 G435",
+                Source = DeviceSource.Hid24G,
+                Kind = DeviceKind.Headset,
+                Protocol = "Logitech G435 (2.4G)",
+            };
+            claimed.Add(session.Status);
+        }
+
         // 已拔出的接收器（与 ReconcileRemovals 同一套动作，别再各写一遍）
         claimed.AddRange(ReconcileRemovals(availableDevices));
         return claimed;
@@ -221,6 +292,21 @@ public sealed class LogitechPlugin : IBatteryPlugin
             }
             _claims?.Release(path, Name);
             Log.Info($"罗技接口已移除: {path}");
+        }
+
+        foreach (var path in _headsets.Keys)
+        {
+            if (availableDevices.Any(d => d.DevicePath == path)) continue;
+            if (!_headsets.TryRemove(path, out var headset)) continue;
+
+            headset.Handle?.Dispose();
+            _claims?.Release(path, Name);
+            if (headset.Status != null)
+            {
+                headset.Status.IsOnline = false;
+                gone.Add(headset.Status);
+            }
+            Log.Info($"罗技 G435 接口已移除: {path}");
         }
         return gone;
     }
@@ -527,7 +613,153 @@ public sealed class LogitechPlugin : IBatteryPlugin
                 }
             }
         }
+        foreach (var session in _headsets.Values)
+        {
+            if (session.Handle == null || session.Status == null) continue;
+            if (DateTimeOffset.Now - session.LastAttempt < G435PollInterval) continue;
+            session.LastAttempt = DateTimeOffset.Now;
+
+            try
+            {
+                lock (session.Gate)
+                {
+                    Log.Info("罗技 G435 读取电量（Realtek 桥进 bootloader，音频会短暂中断）");
+                    var mv = ReadG435Millivolts(session.Handle, out bool headsetOff);
+                    var status = session.Status;
+                    if (mv is { } millivolts)
+                    {
+                        int pct = G435Codec.MillivoltsToPercent(millivolts);
+                        bool changed = status.BatteryPercent != pct
+                                    || status.Charging != ChargingState.Unknown
+                                    || !status.IsOnline;
+                        status.BatteryPercent = pct;
+                        status.Charging = ChargingState.Unknown;   // 协议没有充电标志，不猜
+                        status.LastUpdated = DateTimeOffset.Now;
+                        status.IsOnline = true;
+                        if (changed)
+                        {
+                            Log.Info($"罗技 G435 电量: {pct}%（{millivolts} mV）");
+                            updated.Add(status);
+                            StatusPushed?.Invoke(status);
+                        }
+                    }
+                    else if (headsetOff && status.IsOnline)
+                    {
+                        status.IsOnline = false;
+                        status.LastUpdated = DateTimeOffset.Now;
+                        Log.Info("罗技 G435 未连接（耳机未开机），标记离线");
+                        updated.Add(status);
+                        StatusPushed?.Invoke(status);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"罗技 G435 读取失败: {ex.Message}");
+            }
+        }
+
         return updated;
+    }
+
+    /// <summary>
+    /// 读 G435 电量：Realtek 桥进 bootloader → 查连接/模式 → 读 OTA 电池电压 → 退出 bootloader。
+    /// 协议来自 endes 的逆向与 deddroid/logitech-g435-battery（见 docs/hardware/logitech.md 的「罗技 G435 耳机」小节）。
+    /// 每次读都会让音频断约 1 秒，所以调用方按 <see cref="G435PollInterval"/> 限频。
+    /// </summary>
+    private static ushort? ReadG435Millivolts(HidDeviceHandle handle, out bool headsetOff)
+    {
+        headsetOff = false;
+        if (!G435Bridge(handle, 0x01, 0x03, Array.Empty<byte>())) return null;
+
+        try
+        {
+            G435Drain(handle);
+            byte seq = 1;
+
+            byte connected = 0;
+            bool gotConnected = G435Query(handle, G435Codec.CategoryWireless, ref seq, new byte[] { G435Codec.RemoteGetConnectStatus },
+                b => G435Codec.TryParseRemote(b, G435Codec.RemoteGetConnectStatus, out connected), TimeSpan.FromSeconds(1.2));
+            if (!gotConnected) return null;
+            if (connected == 0)
+            {
+                headsetOff = true;
+                Log.Info("罗技 G435 接收器报告耳机未连接（未开机）");
+                return null;
+            }
+
+            byte mode = 0;
+            bool gotMode = G435Query(handle, G435Codec.CategoryWireless, ref seq, new byte[] { G435Codec.RemoteGetMode },
+                b => G435Codec.TryParseRemote(b, G435Codec.RemoteGetMode, out mode), TimeSpan.FromSeconds(1.2));
+            if (!gotMode || mode != 1)
+            {
+                // 官方配对工具同款：remote mode 1 才会把 OTA 电量命令转发给耳机
+                G435Query(handle, G435Codec.CategoryWireless, ref seq, new byte[] { G435Codec.RemoteSetMode, 0x01 }, _ => true,
+                    TimeSpan.FromMilliseconds(300));
+            }
+
+            ushort mv = 0;
+            bool gotBattery = G435Query(handle, G435Codec.CategoryOta, ref seq, new byte[] { 0x00, 0x31 },
+                b => G435Codec.TryParseBattery(b, out mv), TimeSpan.FromSeconds(1.5));
+            return gotBattery ? mv : null;
+        }
+        finally
+        {
+            G435Bridge(handle, 0x08, 0x03, Array.Empty<byte>());
+        }
+    }
+
+    /// <summary>发一条 Realtek 桥消息（feature 0x06）并等 input 上的 ACK（跳过音量键报文）。</summary>
+    private static bool G435Bridge(HidDeviceHandle handle, byte op0, byte op1, byte[] body)
+    {
+        int payloadLength = handle.Info.FeatureReportLength - 1;
+        if (payloadLength < 2) return false;
+        var payload = new byte[payloadLength];
+        payload[0] = op0;
+        payload[1] = op1;
+        Array.Copy(body, 0, payload, 2, Math.Min(body.Length, payloadLength - 2));
+        if (!handle.SetFeature(G435ReportId, payload)) return false;
+
+        var deadline = DateTime.UtcNow.AddMilliseconds(800);
+        while (DateTime.UtcNow < deadline)
+        {
+            var input = handle.ReadInput(TimeSpan.FromMilliseconds(100));
+            if (input is { Length: >= 2 } && input[0] == G435ReportId) return true;
+        }
+        return false;
+    }
+
+    /// <summary>把 feature 0x06 里积压的旧响应读干净，避免把上一条应答当成新查询。</summary>
+    private static void G435Drain(HidDeviceHandle handle)
+    {
+        for (int i = 0; i < 16; i++)
+        {
+            var buffer = handle.GetFeature(G435ReportId);
+            if (buffer == null || buffer.Length < 2 || buffer[1] == 0xFF) break;
+        }
+    }
+
+    /// <summary>发一条 PA 命令并在 feature 0x06 上等匹配的响应（解析器返回 true 即结束）。</summary>
+    private static bool G435Query(HidDeviceHandle handle, byte category, ref byte seq, byte[] payload,
+        Func<byte[], bool> consume, TimeSpan timeout)
+    {
+        var command = G435Codec.BuildCommand(category, seq, payload);
+        seq = (byte)(seq % 127 + 1);
+
+        var message = new byte[command.Length + 1];
+        message[0] = (byte)command.Length;
+        Array.Copy(command, 0, message, 1, command.Length);
+        if (!G435Bridge(handle, 0x04, 0x03, message)) return false;
+
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            var buffer = handle.GetFeature(G435ReportId);
+            if (buffer == null || buffer.Length < 2) break;
+            if (buffer[1] != 0xFF && consume(buffer)) return true;
+            System.Threading.Thread.Sleep(30);
+        }
+        return false;
     }
 
     private bool RefreshBattery(ReceiverSession session, byte idx, DevEntry dev)
@@ -783,13 +1015,16 @@ public sealed class LogitechPlugin : IBatteryPlugin
 
     public void Detach()
     {
-        int released = _sessions.Count;
+        int released = _sessions.Count + _headsets.Count;
         foreach (var session in _sessions.Values)
         {
             StopListening(session);
             session.Io?.Dispose();
         }
         _sessions.Clear();
+        foreach (var headset in _headsets.Values)
+            headset.Handle?.Dispose();
+        _headsets.Clear();
         if (released > 0) Log.Info($"罗技插件已卸载，释放 {released} 个会话");
     }
 }

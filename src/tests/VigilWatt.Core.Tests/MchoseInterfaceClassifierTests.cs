@@ -6,7 +6,7 @@ namespace VigilWatt.Core.Tests;
 /// <summary>
 /// 功 能： 迈从家族接口分流的回归测试（键盘 / 鼠标 / 耳机三条链路不能互相抢）。
 /// 2026/10/19 21:10:00 xliu
-/// 指纹来源见 docs/hardware/mchose.md §1、§1.6，以及 docs/hardware/mchose-v9-pro.md。
+/// 指纹来源见 docs/hardware/mchose.md §1、§4，以及 docs/hardware/mchose-v9-pro.md。
 /// </summary>
 public sealed class MchoseInterfaceClassifierTests
 {
@@ -31,6 +31,12 @@ public sealed class MchoseInterfaceClassifierTests
     [InlineData(0x3837, 0x1018, @"\\?\hid#vid_3837&pid_1018&mi_02&col02#test", 0xFF01, 0x0001, 64, 64, 0, 0x4D, MchoseInterfaceKind.MouseK7)]
     // 同一颗 K7 dongle 的另一条接口（FF0B/0x00C4，61 字节）：实测零报文，仍按普通鼠标接口走
     [InlineData(0x3837, 0x1018, @"\\?\hid#vid_3837&pid_1018&mi_02&col01#test", 0xFF0B, 0x00C4, 61, 61, 0, 0x00, MchoseInterfaceKind.MouseV2)]
+    // 鼠标：MCHOSE G3 Ultra（Realtek 0BDA:4762，0xFF01 厂商集合，65 字节 feature 通道）
+    [InlineData(0x0BDA, 0x4762, @"\\?\hid#vid_0bda&pid_4762&mi_02&col02#test", 0xFF01, 0x0001, 65, 65, 65, 0x11, MchoseInterfaceKind.MouseG3Ultra)]
+    // 同 VID/PID 的 0xFF0B 标准键鼠集合不是电量通道
+    [InlineData(0x0BDA, 0x4762, @"\\?\hid#vid_0bda&pid_4762&mi_02&col01#test", 0xFF0B, 0x0104, 61, 61, 61, 0x2A, MchoseInterfaceKind.None)]
+    // 同 VID 的其它 Realtek 设备不认
+    [InlineData(0x0BDA, 0x4761, @"\\?\hid#vid_0bda&pid_4761&mi_02&col02#test", 0xFF01, 0x0001, 65, 65, 65, 0x11, MchoseInterfaceKind.None)]
     // 标准键盘用法：即使 VID 是迈从也不是配置通道
     [InlineData(0x3837, 0x201B, @"\\?\hid#vid_3837&pid_201b&mi_00&col01#test", 0x0001, 0x0006, 20, 20, 0, 0x00, MchoseInterfaceKind.None)]
     // 别家 VID：罗技（046D）、雷柏（24AE）、AULA（3554）都不能进迈从链路

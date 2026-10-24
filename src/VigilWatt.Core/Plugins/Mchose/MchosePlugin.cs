@@ -27,6 +27,9 @@ public sealed class MchosePlugin : BatteryPluginBase
     /// <summary>鼠标 V2 世代：纯被动 E2 状态帧 + 0x11/0x06 触发上报。</summary>
     private const string ProtocolMouseV2 = "mouse-v2";
 
+    /// <summary>MCHOSE G3 Ultra（Realtek 0BDA:4762）：E2 帧同鼠标 V2，但触发帧走 feature 0x11。</summary>
+    private const string ProtocolMouseG3Ultra = "mouse-g3-ultra";
+
     /// <summary>K7 V2 Ultra+：64 字节 output 0x4D，0x0900 查询 + 0x0600 事件（帧与判据见 <see cref="MchoseK7Codec"/>）。</summary>
     private const string ProtocolMouseK7 = "mouse-k7";
 
@@ -100,6 +103,7 @@ public sealed class MchosePlugin : BatteryPluginBase
         {
             ProtocolMouseV2 => DeviceKind.Mouse,
             ProtocolMouseK7 => DeviceKind.Mouse,
+            ProtocolMouseG3Ultra => DeviceKind.Mouse,
             ProtocolHeadsetV9 => DeviceKind.Headset,
             _ => DeviceKind.Keyboard,
         };
@@ -111,6 +115,11 @@ public sealed class MchosePlugin : BatteryPluginBase
         // 耳机接收器是独立 VID/PID，只对应已验证的 V9 Pro；协议里没有型号回执，型号名只能写死
         if (info.VendorId == MchoseV9ProCodec.VendorId && info.ProductId == MchoseV9ProCodec.ProductId)
             return "迈从 V9 Pro";
+
+        // Realtek 方案接收器自报「G3 Mouse 8K」，官方型号名是 G3 Ultra（0BDA:4762）
+        if (info.VendorId == MchoseInterfaceClassifier.G3UltraVid &&
+            info.ProductId == MchoseInterfaceClassifier.G3UltraPid)
+            return "迈从 G3 Ultra";
 
         var product = string.IsNullOrEmpty(info.Product) ? "" : info.Product.Replace("MCHOSE", "").Trim();
         var model = KnownModelByPath.TryGetValue(info.DevicePath, out var m) ? m : "";
@@ -144,6 +153,7 @@ public sealed class MchosePlugin : BatteryPluginBase
     private const string LogKeyV9Silent = "v9-silent"; // "V9 Pro 查询没等到电量响应"
     private const string LogKeyK7NoPermit = "k7-no-permit"; // "没开写入许可，跳过 K7 主动查询"
     private const string LogKeyK7Asleep = "k7-asleep";      // "K7 只回 1 字节 0xFF，鼠标多半在睡"
+    private const string LogKeyG3Silent = "g3-silent";      // "G3 Ultra 触发后没等到 E2 帧"
 
     /// <summary>协议探测：鼠标 V2（被动等 E2）→ 官方 QHW（新世代）→ 键盘 V1 会话协议（G87 / G87 V2）。</summary>
     protected override (string Protocol, int? Percent, ChargingState Charging)? Probe(HidDeviceHandle handle)
@@ -172,6 +182,15 @@ public sealed class MchosePlugin : BatteryPluginBase
             var k7 = TryMouseK7(handle);
             if (k7 != null) KnownProtocolByPath[path] = ProtocolMouseK7;
             return k7;
+        }
+
+        // Realtek dongle 的 64 字节 output 通道不存在，触发帧只能走 feature 0x11；
+        // 判据已精确命中，直接交给 G3 分支，避免往 MouseV2 白等两轮。
+        if (kind == MchoseInterfaceKind.MouseG3Ultra)
+        {
+            var g3 = TryG3Ultra(handle);
+            if (g3 != null) KnownProtocolByPath[path] = ProtocolMouseG3Ultra;
+            return g3;
         }
 
         // ≥60 的接口只可能是鼠标接收器：它不是 0x13 会话通道，在这条通道上发键盘帧没有意义
@@ -216,6 +235,7 @@ public sealed class MchosePlugin : BatteryPluginBase
             ProtocolKeyboardV1 => TryKeyboardV1(handle) is { } kb ? (ProtocolKeyboardV1, kb.Percent, kb.Charging) : null,
             ProtocolMouseV2 => TryMouseV2(handle),
             ProtocolMouseK7 => TryMouseK7(handle),
+            ProtocolMouseG3Ultra => TryG3Ultra(handle),
             ProtocolHeadsetV9 => TryHeadsetV9(handle),
             _ => null,
         };
@@ -236,6 +256,7 @@ public sealed class MchosePlugin : BatteryPluginBase
         {
             "qhw" => PollQhw(dev),
             ProtocolKeyboardV1 => PollKeyboardV1(dev),
+            ProtocolMouseG3Ultra => PollG3Ultra(dev),
             ProtocolHeadsetV9 => PollHeadsetV9(dev),
             _ => null,
         };
@@ -255,7 +276,7 @@ public sealed class MchosePlugin : BatteryPluginBase
     protected override (int? Percent, ChargingState Charging, bool Offline)? TryParsePassiveInput(
         TrackedDevice dev, byte[] input)
     {
-        if (dev.Protocol == ProtocolMouseV2)
+        if (dev.Protocol is ProtocolMouseV2 or ProtocolMouseG3Ultra)
         {
             var kind = MchoseMouseCodec.ParseStatus(input, out int pct, out bool chg);
             if (kind == MouseV2PushKind.Status)
@@ -539,6 +560,75 @@ public sealed class MchosePlugin : BatteryPluginBase
             if (kind != MouseV2PushKind.Status) continue;
             Log.Info($"迈从 鼠标 E2 状态帧: 电量={pct} 充电={chg} 原始={Log.Hex(input)}");
             return (pct, chg);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// G3 Ultra 探测：官方 M HUB 同款 `0x11/0x06` 触发帧，但走 **feature report 0x11**
+    /// （鼠标 V2 的 64 字节 output 通道在 Realtek dongle 上不存在）。随后等 E2 状态帧。
+    /// 帧来源见 docs/hardware/mchose.md §4。
+    /// </summary>
+    private static (string Protocol, int? Percent, ChargingState Charging)? TryG3Ultra(HidDeviceHandle handle)
+    {
+        if (!IsWritesEnabled(SettingsKey)) return null;
+
+        if (!SendG3UltraTrigger(handle))
+        {
+            Log.Once(LogLevel.Debug, LogKey(handle, LogKeyG3Silent),
+                $"迈从 G3 Ultra 触发帧写失败（feature 0x11 不在本接口？）: {handle.Info.DevicePath}");
+            return null;
+        }
+
+        var push = ListenG3Ultra(handle, TimeSpan.FromSeconds(2));
+        if (!push.HasValue)
+        {
+            Log.Once(LogLevel.Debug, LogKey(handle, LogKeyG3Silent),
+                $"迈从 G3 Ultra 触发后无 E2 帧（鼠标可能在睡）: {handle.Info.DevicePath}");
+            return null;
+        }
+
+        Log.ResetOnce(LogKey(handle, LogKeyG3Silent));
+        return (ProtocolMouseG3Ultra, push.Value.Percent,
+            push.Value.Charging ? ChargingState.Charging : ChargingState.Discharging);
+    }
+
+    /// <summary>G3 Ultra 轮询：一条 feature 触发帧 + 最多 1.2 秒的 E2 等待；失败由 <see cref="PollDevice"/> 记账。</summary>
+    private static (int? Percent, ChargingState Charging)? PollG3Ultra(TrackedDevice dev)
+    {
+        if (!IsWritesEnabled(SettingsKey)) return null;
+        if (!SendG3UltraTrigger(dev.Handle)) return null;
+
+        var push = ListenG3Ultra(dev.Handle, TimeSpan.FromSeconds(1.2));
+        return push.HasValue
+            ? (push.Value.Percent, push.Value.Charging ? ChargingState.Charging : ChargingState.Discharging)
+            : null;
+    }
+
+    /// <summary>发 G3 Ultra 的 feature 触发帧：report 0x11，数据 = `06 00…` 逐字节取反（F9 FF…）。</summary>
+    private static bool SendG3UltraTrigger(HidDeviceHandle handle)
+    {
+        if (handle.Info.FeatureReportLength < 2) return false;
+        var payload = MchoseMouseCodec.BuildG3UltraTriggerPayload(handle.Info.FeatureReportLength - 1);
+        return handle.SetFeature(MchoseMouseCodec.PokeReportId, payload);
+    }
+
+    /// <summary>纯被动监听 E2 状态帧，不写任何字节。</summary>
+    private static (int Percent, bool Charging)? ListenG3Ultra(HidDeviceHandle handle, TimeSpan window)
+    {
+        var deadline = DateTime.UtcNow + window;
+        while (DateTime.UtcNow < deadline)
+        {
+            var input = handle.ReadInput(TimeSpan.FromMilliseconds(300));
+            if (input == null) continue;
+            var kind = MchoseMouseCodec.ParseStatus(input, out int pct, out bool chg);
+            if (kind == MouseV2PushKind.Status)
+            {
+                Log.Info($"迈从 G3 Ultra E2 状态帧: 电量={pct} 充电={chg} 原始={Log.Hex(input)}");
+                return (pct, chg);
+            }
+            if (kind == MouseV2PushKind.StatusInvalid && Log.IsEnabled(LogLevel.Debug))
+                Log.Debug($"迈从 G3 Ultra E2 帧电量越界（={pct}）: {Log.Hex(input)}");
         }
         return null;
     }

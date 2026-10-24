@@ -1,4 +1,4 @@
-# 迈从 MCHOSE（G87 键盘 / QHW 新一代 dongle / K7 V2 Ultra+）
+# 迈从 MCHOSE（G87 键盘 / QHW 新一代 dongle / K7 V2 Ultra+ / G3 Ultra）
 
 > 从 [protocols.md](protocols.md) 拆出（2026-10-21）。结论均来自真机验证或官方软件抓包；改协议代码前先读本文。
 
@@ -254,3 +254,34 @@ WebHID 侧 reportId 自动加首字节；Windows WriteFile 时 [0] 就是要写�
 - **被动事件路径**（0x0600）：鼠标唤醒即上报，离线设备能被翻回在线
 - **长跑**：01:13 → 07:42 连续 6.5 小时设备静止休眠，零告警刷屏、零异常
 - **未留证**：充电（未被放上底座）、断连（dongle 全程插着）两态
+
+## 4. 迈从 G3 Ultra（0BDA:4762）—— ✅ 本机真机验证（2026-10-21）
+
+**身份**：G3 Ultra 的 2.4G 接收器是 Realtek 方案：VID/PID `0BDA:4762`，产品字符串「G3 Mouse 8K」；官方 M HUB 也把 `3034`（0x0BDA）/`18274`（0x4762）认成 **G3 Ultra**。Windows 枚举出两个厂商集合：
+
+| 集合 | usage | 长度 | 用途 |
+|---|---|---|---|
+| `MI_02&Col02` | `0xFF01/0x0001` | in/out/feature 各 65 | **电量通道**（feature 0x11 触发、input 0x13 回帧） |
+| `MI_02&Col01` | `0xFF0B/0x0104` | 61 | 键鼠标准集合，**不是**电量通道 |
+
+**触发帧（写）**：官方 `battery-monitor` 的 MOUSE_LEGACY 写法是 feature report `0x11`，数据 `06 00×63` 逐字节取反，即 `F9 FF×63`。Windows `HidD_SetFeature` 的 `buffer[0]` 是 report ID（原样 0x11），其后才是数据区——与本仓库鼠标 V2 的 output 通道不是同一条路。
+
+**状态帧（读）**：input report `0x13`，去掉前缀后逐字节 `^0xFF`：
+
+```
+E2 01 01 00 3D 03 02 06 …
+         │  └ [4] 电量 0x3D = 61%
+         └ [3] 充电位（1=充电中）
+```
+
+真机样本（2026-10-21，本机 0BDA:4762，鼠标在线）：
+
+```
+13 1D FE FE FF C2 FC FD F9 FF …   → 去前缀取反 = E2 01 01 00 3D …
+```
+
+即 **61% / 放电**，与官方 M HUB 的 G3 Ultra 读数口径一致。
+
+**轮询**：鼠标不会自发推 E2，必须每次发一条 feature 触发帧再等回帧；本插件按 60 秒主轮询（15 秒发现节拍也会重探），不是纯被动。会写帧，故沿用 `Mchose` 品牌级开关、默认关。
+
+**实现**：`MchoseInterfaceClassifier.MouseG3Ultra`、`MchosePlugin.TryG3Ultra` / `PollG3Ultra`、`MchoseMouseCodec.BuildG3UltraTriggerPayload`。

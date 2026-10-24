@@ -40,6 +40,18 @@ internal static class MchoseMouseCodec
     }
 
     /// <summary>
+    /// G3 Ultra（0BDA:4762）的同一触发帧走 **feature report 0x11**：HidD_SetFeature 的首字节由
+    /// 句柄层补 report ID，这里只返回数据区（F9 FF…，长度 = feature 长度 - 1）。
+    /// </summary>
+    public static byte[] BuildG3UltraTriggerPayload(int payloadLength)
+    {
+        var payload = new byte[Math.Max(payloadLength, 1)];
+        payload[0] = (byte)(PokeCmd ^ 0xFF);
+        for (int i = 1; i < payload.Length; i++) payload[i] = 0xFF;
+        return payload;
+    }
+
+    /// <summary>
     /// 解析 E2 状态帧。Windows ReadInput 缓冲 [0] 是 report ID 前缀（不参与取反），偏移 0/1 都试。
     /// 每帧 payload 全部 ^0xFF 后：[0]=0xE2、[3]=充电（1=充电中）、[4]=电量%。
     /// </summary>

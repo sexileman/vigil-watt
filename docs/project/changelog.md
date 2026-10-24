@@ -3,6 +3,11 @@
 > 只留「改了什么 + 为什么」。协议、坑、流程在专题文档，这里不抄第二份。
 > 新会话不必读。每条一两句；单日新增超过 15 行就是写长了。发版只在文末版本表加一行。构建结果、打包耗时、文件清单不记（`AGENTS.md` §3）。
 
+## 2026-10-24
+
+- **MCHOSE G3 Ultra（`0BDA:4762`）**：Realtek 接收器的电量通道是 feature `0x11` 触发（`F9 FF×63`）+ input `0x13` 的 E2 状态帧，和键盘 G87 的 20 字节 `0x13` 会话、鼠标 V2 的 output 触发都不是同一条路。新增 `MchoseInterfaceClassifier.MouseG3Ultra`（`0xFF01/0x0001`、65 字节 feature）与 `MchosePlugin.TryG3Ultra` / `PollG3Ultra`，本机读出 61% 放电，与官方 M HUB 一致；会写帧，沿用 `Mchose` 品牌开关、默认关。见 `hardware/mchose.md` §4。
+- **罗技 G435 耳机（`046D:0ACB`）**：不是 HID++，走 Realtek 桥的 feature `0x06`（进 bootloader → PA 命令 → 读回 → 退出）。新增 `G435Codec` 与 `LogitechPlugin.IsG435Interface` / `ReadG435Millivolts`，毫伏按社区曲线换算百分比；耳机未连接时回 `D2 00`（210mV）必须拒绝。每次读会让音频断约 1 秒，故按 15 分钟节拍读、默认关，充电态 Unknown。见 `hardware/logitech.md`。
+
 ## 2026-10-21
 
 - **MCHOSE K7 V2 Ultra+（`3837:1018`）**：接入 `mouse-k7` 协议——`0x0900` 查询设备信息、被动解析 `0x0600` 电源事件。这颗 dongle 的 feature 通道写通读不通（`GetFeature` 恒 `ERROR_GEN_FAILURE`），原有的 feature 读族与 E2 被动路径一个都不成立，这才是它原先完全读不到电量的根因。帧取自官方 M HUB 运行时 JS 的 `i1e()` / `_K()` / `LA()`，不是猜的。新增 `MchoseK7Codec`（纯函数 + 16 个真机帧向量用例），分类器加 `MouseK7` 并排在 `MouseV2` 之前。见 `hardware/protocols.md` §15。
